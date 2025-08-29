@@ -96,20 +96,42 @@ async function fetchAndParseSales(url) {
             }
         });
 
-        if (scriptWithData) {
-            const match = scriptWithData.match(/var product = (\{[\s\S]*?\});/);
-            if (match && match[1]) {
-                productData = JSON.parse(match[1]);
-                return {
-                    productName: productData.title,
-                    totalSold: productData.total_sold
-                };
+        if (scriptWithData) {            
+            const startMarker = 'var product = ';
+            const startIndex = scriptWithData.indexOf(startMarker);
+            const objectStartIndex = scriptWithData.indexOf('{', startIndex);
+
+            if (objectStartIndex !== -1) {
+                let braceCount = 1;
+                let objectEndIndex = -1;
+                for (let i = objectStartIndex + 1; i < scriptWithData.length; i++) {
+                    if (scriptWithData[i] === '{') braceCount++;
+                    if (scriptWithData[i] === '}') braceCount--;
+                    if (braceCount === 0) {
+                        objectEndIndex = i;
+                        break;
+                    }
+                }
+
+                if (objectEndIndex !== -1) {
+                    const jsonString = scriptWithData.substring(objectStartIndex, objectEndIndex + 1);
+                    try {
+                        const productData = JSON.parse(jsonString);
+                        return {
+                            productName: productData.title,
+                            totalSold: productData.total_sold
+                        };
+                    } catch (e) {
+                        console.error(`最終 JSON 解析失敗於 ${url}:`, e.message);
+                        return null; // 解析失敗
+                    }
+                }
             }
         }
-        return null; // 找不到資料則返回 null
+        return null; // 找不到腳本
     } catch (error) {
         console.error(`抓取 ${url} 失敗:`, error.message);
-        return null; // 發生錯誤也返回 null
+        return null; // 抓取失敗
     }
 }
 
