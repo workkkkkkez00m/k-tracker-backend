@@ -8,7 +8,11 @@ const { Connection, Request, TYPES } = require('tedious'); // 引入 tedious
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(cors());
+app.use(cors({
+    origin: '*', // 允許來自任何來源的請求
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // 允許所有標準的 HTTP 方法
+    allowedHeaders: ['Content-Type', 'Authorization'] // 允許的標頭
+}));
 app.use(express.json()); 
 
 // --- 資料庫連線設定 (從 Render 的環境變數讀取) ---
@@ -155,6 +159,7 @@ app.get('/fetch-sales', async (req, res) => {
 app.get('/api/products', async (req, res) => {
     try {
         const products = await executeQuery('SELECT * FROM products ORDER BY created_at DESC');
+        console.log(`[LOG] /api/products - Found ${products.length} products in DB.`);
         res.json(products);
     } catch (error) {
         res.status(500).json({ error: '讀取追蹤列表失敗' });
