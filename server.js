@@ -1,4 +1,11 @@
 const express = require('express');
+// --- 新增的偵錯日誌 ---
+console.log("--- [DEBUG] DATABASE CONNECTION INFO ---");
+console.log("DB_HOST:", process.env.DB_HOST);
+console.log("DB_DATABASE:", process.env.DB_DATABASE);
+console.log("DB_USER:", process.env.DB_USER);
+console.log("DB_PASSWORD is set:", !!process.env.DB_PASSWORD); 
+console.log("--------------------------------------");
 const axios = require('axios');
 const cheerio = require('cheerio');
 const cors = require('cors');
