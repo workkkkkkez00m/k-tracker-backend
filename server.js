@@ -261,6 +261,7 @@ cron.schedule('*/30 * * * *', async () => {
 });
 
 
-app.listen(PORT, () => {
-    console.log(`伺服器已啟動，正在監聽 PORT: ${PORT}`);
+const host = '0.0.0.0';
+app.listen(PORT, host, () => {
+    console.log(`伺服器已啟動，正在監聽 http://${host}:${PORT}`);
 });
