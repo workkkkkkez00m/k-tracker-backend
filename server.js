@@ -2,13 +2,14 @@ const express = require('express');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const cors = require('cors');
+const cron = require('node-cron');
 const { Connection, Request, TYPES } = require('tedious'); // 引入 tedious
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 app.use(cors());
-app.use(express.json()); // 啟用 JSON body 解析，讓後端能讀取前端傳來的資料
+app.use(express.json()); 
 
 // --- 資料庫連線設定 (從 Render 的環境變數讀取) ---
 const dbConfig = {
@@ -67,10 +68,67 @@ function executeQuery(query, params = []) {
     });
 }
 
-// --- 舊的即時查詢 API (基礎功能，維持不變) ---
+// ===================================================
+// ===         核心爬蟲邏輯 (重構為獨立函式)         ===
+// ===================================================
+async function fetchAndParseSales(url) {
+    try {
+        const headers = { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.0.0 Safari/537.36' };
+        const response = await axios.get(url, { headers });
+        const $ = cheerio.load(response.data);
+
+        let productData = null;
+        let scriptWithData = null;
+
+        $('script').each((i, el) => {
+            const scriptContent = $(el).html();
+            if (scriptContent.includes('var product =') && scriptContent.includes('"total_sold"')) {
+                scriptWithData = scriptContent;
+                return false;
+            }
+        });
+
+        if (scriptWithData) {
+            const match = scriptWithData.match(/var product = (\{[\s\S]*?\});/);
+            if (match && match[1]) {
+                productData = JSON.parse(match[1]);
+                return {
+                    productName: productData.title,
+                    totalSold: productData.total_sold
+                };
+            }
+        }
+        return null; // 找不到資料則返回 null
+    } catch (error) {
+        console.error(`抓取 ${url} 失敗:`, error.message);
+        return null; // 發生錯誤也返回 null
+    }
+}
+
+// ===================================================
+// ===                 API 端點                    ===
+// ===================================================
+// --- 舊的即時查詢 API  ---
 app.get('/fetch-sales', async (req, res) => {
-    // ... 這部分的爬蟲邏輯完全不用動，請沿用我們之前最終修正好的版本 ...
-    // ... 它會抓取網頁並解析出 productName 和 totalSold ...
+    const { productUrl } = req.query;
+    if (!productUrl) return res.status(400).json({ error: '請提供商品網址' });
+    
+    const data = await fetchAndParseSales(productUrl);
+    if (data) {
+        res.json(data);
+    } else {
+        res.status(404).json({ error: '找不到銷量數據或抓取失敗' });
+    }
+});
+
+// --- 【新】獲取所有正在追蹤的商品列表 ---
+app.get('/api/products', async (req, res) => {
+    try {
+        const products = await executeQuery('SELECT * FROM products ORDER BY created_at DESC');
+        res.json(products);
+    } catch (error) {
+        res.status(500).json({ error: '讀取追蹤列表失敗' });
+    }
 });
 
 // --- 【新】新增追蹤任務的 API ---
@@ -136,7 +194,41 @@ app.get('/api/products/:id', async (req, res) => {
     }
 });
 
-// --- 排程器 (Scheduler) 和其他 API (例如獲取所有追蹤商品列表) 的邏輯未來會加在這裡 ---
+// ===================================================
+// ===         自動排程器 (Cron Job)               ===
+// ===================================================
+// cron 語法: '分鐘 小時 日 月 週'
+// '*/30 * * * *' 代表 "每 30 分鐘"
+cron.schedule('*/30 * * * *', async () => {
+    const now = new Date().toLocaleString('zh-TW', { timeZone: 'Asia/Taipei' });
+    console.log(`[${now}] 排程啟動：開始抓取所有追蹤商品的最新銷量...`);
+    
+    try {
+        const productsToTrack = await executeQuery('SELECT * FROM products');
+
+        for (const product of productsToTrack) {
+            console.log(` -> 正在處理: ${product.product_name}`);
+            const salesData = await fetchAndParseSales(product.url);
+
+            if (salesData && salesData.totalSold !== null) {
+                const sql = 'INSERT INTO sales_logs (product_id, timestamp, total_sold) VALUES (@product_id, @timestamp, @total_sold)';
+                const params = [
+                    { name: 'product_id', type: TYPES.Int, value: product.id },
+                    { name: 'timestamp', type: TYPES.DateTimeOffset, value: new Date() },
+                    { name: 'total_sold', type: TYPES.Int, value: salesData.totalSold }
+                ];
+                await executeQuery(sql, params);
+                console.log(`    - 成功儲存銷量: ${salesData.totalSold}`);
+            } else {
+                console.log(`    - 抓取銷量失敗，跳過。`);
+            }
+        }
+        console.log('排程結束。');
+
+    } catch (error) {
+        console.error('排程任務執行失敗:', error);
+    }
+});
 
 
 app.listen(PORT, () => {
