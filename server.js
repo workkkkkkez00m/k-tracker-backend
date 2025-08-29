@@ -163,25 +163,44 @@ app.get('/api/products', async (req, res) => {
 
 // --- 【新】新增追蹤任務的 API ---
 app.post('/api/track', async (req, res) => {
-    const { url, multiple_pattern, product_name } = req.body;
-    if (!url || !multiple_pattern || !product_name) {
-        return res.status(400).json({ error: '缺少 url, product_name 或 multiple_pattern 參數' });
+    const { url, multiple_pattern } = req.body; // 從前端獲取 url 和倍率
+    if (!url || !multiple_pattern) {
+        return res.status(400).json({ error: '缺少 url 或 multiple_pattern 參數' });
     }
-
+    
     try {
-        const sql = `
+        // 步驟 1: 先爬一次，取得商品名稱和初始銷量
+        const initialData = await fetchAndParseSales(url);
+        if (!initialData) {
+            return res.status(404).json({ error: '無法從此網址抓取到商品資訊' });
+        }
+        
+        // 步驟 2: 將商品資訊存入 products 表，並立即取回新產生的 id
+        const insertProductSql = `
             INSERT INTO products (url, product_name, multiple_pattern) 
+            OUTPUT INSERTED.id
             VALUES (@url, @product_name, @multiple_pattern);
         `;
-        const params = [
+        const productParams = [
             { name: 'url', type: TYPES.NVarChar, value: url },
-            { name: 'product_name', type: TYPES.NVarChar, value: product_name },
+            { name: 'product_name', type: TYPES.NVarChar, value: initialData.productName },
             { name: 'multiple_pattern', type: TYPES.Int, value: multiple_pattern }
         ];
-        await executeQuery(sql, params);
-        res.status(201).json({ message: '商品已加入追蹤列表' });
+        const newProductResult = await executeQuery(insertProductSql, productParams);
+        const newProductId = newProductResult[0].id;
+
+        // 步驟 3: 將初始銷量存入 sales_logs 表
+        const insertLogSql = 'INSERT INTO sales_logs (product_id, timestamp, total_sold) VALUES (@product_id, @timestamp, @total_sold)';
+        const logParams = [
+            { name: 'product_id', type: TYPES.Int, value: newProductId },
+            { name: 'timestamp', type: TYPES.DateTimeOffset, value: new Date() },
+            { name: 'total_sold', type: TYPES.Int, value: initialData.totalSold }
+        ];
+        await executeQuery(insertLogSql, logParams);
+        
+        res.status(201).json({ message: '商品已加入追蹤，並已記錄初始銷量' });
+
     } catch (error) {
-        // 處理網址重複的錯誤
         if (error.message && error.message.includes('Violation of UNIQUE KEY constraint')) {
             return res.status(409).json({ error: '此商品網址已經在追蹤列表中' });
         }
