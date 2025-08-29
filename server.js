@@ -27,8 +27,9 @@ const dbConfig = {
     },
     options: {
         database: process.env.DB_DATABASE,
-        encrypt: true, // Azure SQL 需要加密連線
-        rowCollectionOnDone: true // 這個選項讓我們更容易處理回傳的資料
+        encrypt: true,
+        trustServerCertificate: true,
+        rowCollectionOnDone: true
     }
 };
 
