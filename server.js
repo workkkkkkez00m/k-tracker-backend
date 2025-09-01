@@ -13,6 +13,7 @@ const cron = require('node-cron');
 const { Connection, Request, TYPES } = require('tedious'); // 引入 tedious
 
 const app = express();
+const delay = ms => new Promise(res => setTimeout(res, ms));
 const PORT = process.env.PORT || 3000;
 
 app.use(cors({
@@ -201,6 +202,9 @@ app.post('/api/track', async (req, res) => {
         ];
         await executeQuery(insertProductSql, productParams);
         console.log("[DEBUG] /api/track - 2. 'products' 表寫入完成。");
+
+        console.log("[DEBUG] /api/track - 2.5. 等待 1 秒確保資料庫寫入完成...");
+        await delay(1000); // 暫停 1000 毫秒 = 1 秒
 
         // 步驟 2B: 立刻用 url 把剛才的資料查詢回來，以取得 ID
         const selectSql = "SELECT id FROM products WHERE url = @url;";
