@@ -174,21 +174,22 @@ app.get('/api/products', async (req, res) => {
     }
 });
 
-// --- 【新】新增追蹤任務的 API ---
+// --- 【偵錯版】新增追蹤任務的 API ---
 app.post('/api/track', async (req, res) => {
-    const { url, multiple_pattern } = req.body; // 從前端獲取 url 和倍率
+    const { url, multiple_pattern } = req.body;
     if (!url || !multiple_pattern) {
         return res.status(400).json({ error: '缺少 url 或 multiple_pattern 參數' });
     }
-    
+
     try {
-        // 步驟 1: 先爬一次，取得商品名稱和初始銷量
+        console.log("[DEBUG] /api/track - 收到請求，URL:", url);
         const initialData = await fetchAndParseSales(url);
         if (!initialData) {
+            console.error("[DEBUG] /api/track - 抓取初始資料失敗");
             return res.status(404).json({ error: '無法從此網址抓取到商品資訊' });
         }
-        
-        // 步驟 2: 將商品資訊存入 products 表，並立即取回新產生的 id
+        console.log("[DEBUG] /api/track - 1. 成功抓取到初始資料:", initialData);
+
         const insertProductSql = `
             INSERT INTO products (url, product_name, multiple_pattern) 
             OUTPUT INSERTED.id
@@ -199,26 +200,37 @@ app.post('/api/track', async (req, res) => {
             { name: 'product_name', type: TYPES.NVarChar, value: initialData.productName },
             { name: 'multiple_pattern', type: TYPES.Int, value: multiple_pattern }
         ];
-        const newProductResult = await executeQuery(insertProductSql, productParams);
-        const newProductId = newProductResult[0].id;
 
-        // 步驟 3: 將初始銷量存入 sales_logs 表
+        console.log("[DEBUG] /api/track - 2. 準備寫入 products 表...");
+        const newProductResult = await executeQuery(insertProductSql, productParams);
+
+        // --- 這是最關鍵的偵錯日誌 ---
+        console.log("[DEBUG] /api/track - 3. 'products' 表寫入完成。資料庫回傳的結果是:", JSON.stringify(newProductResult, null, 2));
+
+        const newProductId = newProductResult[0].id;
+        console.log(`[DEBUG] /api/track - 4. 成功解析出新 Product ID: ${newProductId}`);
+
         const insertLogSql = 'INSERT INTO sales_logs (product_id, timestamp, total_sold) VALUES (@product_id, @timestamp, @total_sold)';
         const logParams = [
             { name: 'product_id', type: TYPES.Int, value: newProductId },
             { name: 'timestamp', type: TYPES.DateTimeOffset, value: new Date() },
             { name: 'total_sold', type: TYPES.Int, value: initialData.totalSold }
         ];
+
+        console.log("[DEBUG] /api/track - 5. 準備寫入 sales_logs 表...");
         await executeQuery(insertLogSql, logParams);
-        
+        console.log("[DEBUG] /api/track - 6. 'sales_logs' 表寫入成功！");
+
         res.status(201).json({ message: '商品已加入追蹤，並已記錄初始銷量' });
 
     } catch (error) {
+        // --- 如果中間任何一步出錯，都會被這裡捕捉到 ---
+        console.error("[CRITICAL ERROR] 在 /api/track 流程中捕捉到嚴重錯誤:", error);
+
         if (error.message && error.message.includes('Violation of UNIQUE KEY constraint')) {
             return res.status(409).json({ error: '此商品網址已經在追蹤列表中' });
         }
-        console.error('新增追蹤任務失敗:', error);
-        res.status(500).json({ error: '資料庫操作失敗' });
+        res.status(500).json({ error: '伺服器內部錯誤，請查看後端日誌' });
     }
 });
 
