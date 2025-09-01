@@ -182,12 +182,14 @@ app.post('/api/track', async (req, res) => {
     }
     
     try {
+        console.log("[DEBUG] /api/track - 收到請求，URL:", url);
         const initialData = await fetchAndParseSales(url);
         if (!initialData) {
             return res.status(404).json({ error: '無法從此網址抓取到商品資訊' });
         }
-        
-        // --- 步驟 2A: 執行單純的 INSERT ---
+        console.log("[DEBUG] /api/track - 1. 成功抓取到初始資料:", initialData);
+
+        // 步驟 2A: 執行單純的 INSERT
         const insertProductSql = `
             INSERT INTO products (url, product_name, multiple_pattern) 
             VALUES (@url, @product_name, @multiple_pattern);
@@ -198,23 +200,28 @@ app.post('/api/track', async (req, res) => {
             { name: 'multiple_pattern', type: TYPES.Int, value: multiple_pattern }
         ];
         await executeQuery(insertProductSql, productParams);
-        console.log("[DEBUG] 'products' 表寫入完成。");
+        console.log("[DEBUG] /api/track - 2. 'products' 表寫入完成。");
 
-        // --- 步驟 2B: 立即使用 SCOPE_IDENTITY() 取得新 ID ---
-        const getIdSql = "SELECT SCOPE_IDENTITY() AS id;";
-        const idResult = await executeQuery(getIdSql);
-        const newProductId = idResult[0].id;
-        console.log(`[DEBUG] 成功取得新 Product ID: ${newProductId}`);
+        // 步驟 2B: 立刻用 url 把剛才的資料查詢回來，以取得 ID
+        const selectSql = "SELECT id FROM products WHERE url = @url;";
+        const selectParams = [{ name: 'url', type: TYPES.NVarChar, value: url }];
+        const newProductResult = await executeQuery(selectSql, selectParams);
+        
+        if (!newProductResult || newProductResult.length === 0) {
+            throw new Error("寫入新商品後，無法查詢到其 ID");
+        }
+        const newProductId = newProductResult[0].id;
+        console.log(`[DEBUG] /api/track - 3. 成功查詢到新 Product ID: ${newProductId}`);
 
         // 步驟 3: 將初始銷量存入 sales_logs 表
-        const insertLogSql = 'INSERT INTO sales_logs (product_id, timestamp, total_sold) VALUES (@product_id, @timestamp, @total_sold)';
+        const insertLogSql = 'INSERT INTO sales_logs (product_id, "timestamp", total_sold) VALUES (@product_id, @timestamp, @total_sold)';
         const logParams = [
             { name: 'product_id', type: TYPES.Int, value: newProductId },
             { name: 'timestamp', type: TYPES.DateTimeOffset, value: new Date() },
             { name: 'total_sold', type: TYPES.Int, value: initialData.totalSold }
         ];
         await executeQuery(insertLogSql, logParams);
-        console.log("[DEBUG] 'sales_logs' 表寫入成功！");
+        console.log("[DEBUG] /api/track - 4. 'sales_logs' 表寫入成功！");
         
         res.status(201).json({ message: '商品已加入追蹤，並已記錄初始銷量' });
 
