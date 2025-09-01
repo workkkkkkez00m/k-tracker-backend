@@ -52,23 +52,24 @@ function executeQuery(query, params = []) {
                 return reject(err);
             }
 
-            const request = new Request(query, (err, rowCount, rows) => {
+            const results = [];
+            const request = new Request(query, (err, rowCount) => {
                 connection.close();
                 if (err) {
                     return reject(err);
                 }
-                const result = rows.map(row => {
-                    const item = {};
-                    row.forEach(col => {
-                        item[col.metadata.colName] = col.value;
-                    });
-                    return item;
+                resolve(results);
+            });
+
+            request.on('row', columns => {
+                const item = {};
+                columns.forEach(col => {
+                    item[col.metadata.colName] = col.value;
                 });
-                resolve(result);
+                results.push(item);
             });
 
             params.forEach(p => request.addParameter(p.name, p.type, p.value));
-
             connection.execSql(request);
         });
 
